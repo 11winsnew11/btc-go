@@ -1,0 +1,92 @@
+package main
+
+import (
+    "fmt"
+    "sync/atomic"
+    "time"
+
+    "btc-go/random"
+)
+
+// Fungsi untuk memverifikasi target tanpa string formatting (lebih cepat)
+func checkTarget(h *random.Hybrid, targetSuffix string) (bool, string) {
+    combined := h.CombineAllHex()
+    return combined == targetSuffix, combined
+}
+
+func main() {
+    // Target suffix yang dicari
+    targetSuffix := "801d83270000000000"
+				 //  101d83275fb2bc7e0c
+    fmt.Printf("Mencari seed tercepat untuk target: %s\n", targetSuffix)
+    fmt.Println("Memulai pencarian multi-threaded (Stop jika ditemukan iterasi ke-4)...")
+    fmt.Println("-------------------------------------------------------------")
+
+    // Kita gunakan atomic counter untuk seed agar thread-safe
+    var currentSeed uint64 = 0
+    found := false
+
+    // Batas maksimal iterasi internal yang kita anggap "cepat".
+    // Karena urutan seq: 80, 81, 82, 83, 84...
+    // Posisi '84' pertama kali muncul di iterasi ke-4 (index 4).
+    // Jika kita menemukan seed yang menghasilkan target di iterasi ke-4, itu adalah yang tercepat absolut.
+    // Kita set batas iterasi internal maksimal 1000 untuk memastikan itu "cepat".
+    maxInternalIter := 1000 
+
+    // Jalankan beberapa goroutine untuk mempercepat pencarian
+    numWorkers := 8
+    for i := 0; i < numWorkers; i++ {
+        go func(workerID int) {
+            for {
+                if found {
+                    return
+                }
+
+                // Ambil seed berikutnya
+                seed := atomic.AddUint64(&currentSeed, 1)
+                
+                // Inisialisasi Hybrid dengan seed yang sedang diuji
+                h := random.NewHybrid(uint32(seed))
+                if seed%1000000 == 0 {
+                    // Print progress hanya dari worker 0 agar tidak spam
+                    if workerID == 0 {
+                        fmt.Printf("\rScanning seed: %d ...", seed)
+                    }
+                }
+
+                // Loop internal untuk menguji seed ini
+                // Kita batasi hanya mencari 'maxInternalIter' iterasi pertama
+                for iter := 0; iter < maxInternalIter; iter++ {
+                    isMatch, _ := checkTarget(h, targetSuffix)
+                    
+                    if isMatch {
+                        // Flag global berhenti
+                        found = true
+                        
+                        fmt.Printf("\n\n>>> TARGET DITEMUKAN! <<<\n")
+                        fmt.Printf("Seed      : %d\n", seed)
+                        fmt.Printf("Iterasi   : %d\n", iter)
+                        
+                        // Re-generate untuk tampilan full key
+                        h2 := random.NewHybrid(uint32(seed))
+                        fullHex := ""
+                        for k := 0; k <= iter; k++ {
+                            fullHex = h2.CombineAllHex()
+                        }
+                        fmt.Printf("Full Hex  : 0000000000000000000000000000000000000000000000000000000000%s\n", fullHex)
+                        fmt.Println("-------------------------------------------------------------")
+                        return
+                    }
+                }
+            }
+        }(i)
+    }
+
+    // Loop utama menunggu (atau bisa juga di-set timeout)
+    for !found {
+        time.Sleep(1 * time.Second)
+    }
+    
+    // Beri jeda agar output kebaca sebelum program exit
+    time.Sleep(1 * time.Second)
+}

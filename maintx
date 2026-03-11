@@ -1,0 +1,54 @@
+package main
+
+import (
+    "crypto/sha256"
+    "encoding/hex"
+    "fmt"
+    "strings"
+
+    "github.com/btcsuite/btcd/btcec/v2"
+    "github.com/btcsuite/btcd/btcutil"
+    "github.com/btcsuite/btcd/chaincfg"
+    "golang.org/x/crypto/ripemd160" 
+
+    "btc-go/random"
+)
+
+func main() {
+    h := random.NewHybrid(12345)
+
+    fmt.Println("Generate BTC Address from Hybrid Random:")
+    fmt.Println("-------------------------------------------------------------")
+    
+    for i := 0; i < 10; i++ {
+        combined := h.CombineAllHex()
+        fullHex := strings.Repeat("0", 46) + combined
+        privKeyBytes, err := hex.DecodeString(fullHex)
+        if err != nil {
+            fmt.Println("Error decoding hex:", err)
+            continue
+        }
+
+        _, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
+
+        pubKeyBytes := pubKey.SerializeCompressed()
+        
+        sha256Hash := sha256.Sum256(pubKeyBytes)
+        
+        ripemd160Hasher := ripemd160.New()
+        ripemd160Hasher.Write(sha256Hash[:])
+        hash160 := ripemd160Hasher.Sum(nil)
+
+        address, err := btcutil.NewAddressPubKeyHash(hash160, &chaincfg.MainNetParams)
+        if err != nil {
+            fmt.Println("Error creating address:", err)
+            continue
+        }
+
+        // Output Hasil
+        fmt.Printf("PrivKey : %s\n", fullHex)
+        fmt.Printf("Hash160 : %x\n", hash160)
+        fmt.Printf("Address : %s\n", address.EncodeAddress())
+        fmt.Println("-------------------------------------------------------------")
+    }
+}
