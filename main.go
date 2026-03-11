@@ -23,23 +23,23 @@ type Result struct {
 func main() {
     // Konfigurasi jumlah thread (worker)
     numWorkers := 20
-    
-    // Hapus inisialisasi global h, karena akan dibuat lokal per worker
-    // h := random.NewHybrid(12345) 
-    
-    targetHex := "4990d9"
-                  
+
+    targetHex := "4990d97f"
+
     targetBytes, _ := hex.DecodeString(targetHex)
-    
+
+    // --- PERHITUNGAN RANGE ---
+    seqRange := uint64(16) 
+    randomRange := uint64(16777216) 
+    totalRange := seqRange * randomRange 
+
     fmt.Printf("Searching for Hash160 starting with: %s\n", targetHex)
     fmt.Printf("Running with %d threads (Full Parallel)...\n", numWorkers)
+    fmt.Printf("Total Search Space (Range): %d unique keys\n", totalRange)
     fmt.Println("-------------------------------------------------------------")
 
-    // Hapus Mutex karena tidak diperlukan lagi
-    // var mu sync.Mutex 
-    
     var totalCounter uint64 = 0
-    
+
     resultChan := make(chan Result, 1)
     stopChan := make(chan struct{})
 
@@ -48,24 +48,23 @@ func main() {
     // Launcher Worker
     for i := 0; i < numWorkers; i++ {
         go func(workerID int) {
-            // --- OPTIMASI 1: Generator Lokal per Worker ---
+            // Generator Lokal per Worker
             localRng := random.NewHybrid(12345 + uint32(workerID))
-            
+
             ripemd160Hasher := ripemd160.New()
-            
+
             for {
                 select {
                 case <-stopChan:
                     return
                 default:
+                    // Increment counter secara atomik
                     currentCount := atomic.AddUint64(&totalCounter, 1)
 
-                    // --- TANPA LOCK ---
-                    // Langsung panggil generator lokal, tidak perlu mutex
                     combined := localRng.CombineAllHex()
 
                     fullHex := strings.Repeat("0", 46) + combined
-                    
+
                     privKeyBytes, err := hex.DecodeString(fullHex)
                     if err != nil {
                         continue
@@ -74,22 +73,19 @@ func main() {
                     // Generate Public Key
                     _, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
                     pubKeyBytes := pubKey.SerializeCompressed()
-                    
+
                     // Hashing Langsung ke Hash160
                     sha256Hash := sha256.Sum256(pubKeyBytes)
-                    
-                    // Reset hasher sebelum dipakai ulang (penting!)
+
                     ripemd160Hasher.Reset()
                     ripemd160Hasher.Write(sha256Hash[:])
                     hash160 := ripemd160Hasher.Sum(nil)
 
-                    // --- OPTIMASI: Bandingkan 4 Byte Langsung ---
-                    if hash160[0] == targetBytes[0] && 
-                       hash160[1] == targetBytes[1] && 
-                       hash160[2] == targetBytes[2] {
-                    //    hash160[3] == targetBytes[3] 
-                       
-                        
+                    // Bandingkan Byte Langsung
+                    if hash160[0] == targetBytes[0] &&
+                        hash160[1] == targetBytes[1] &&
+                        hash160[2] == targetBytes[2] {
+
                         resultChan <- Result{
                             PrivKey: fullHex,
                             Hash160: hash160,
@@ -98,9 +94,12 @@ func main() {
                         return
                     }
 
-                    // Log Progress (hanya worker 0 untuk mengurangi race io)
+                    // Log Progress (hanya worker 0)
                     if workerID == 0 && currentCount%100000 == 0 {
-                         fmt.Printf("\rSearched %d keys...", currentCount)
+                        // --- HITUNG PERSENTASE ---
+                        percentage := (float64(currentCount) / float64(totalRange)) * 100
+                        // Format tampilan: Counter / Total (Persentase%)
+                        fmt.Printf("\rSearched %d / %d keys (%.4f%%)...", currentCount, totalRange, percentage)
                     }
                 }
             }
@@ -112,12 +111,16 @@ func main() {
     close(stopChan)
 
     elapsed := time.Since(start)
-    
-    time.Sleep(100 * time.Millisecond) 
+
+    // Hitung persentase akhir
+    finalPercentage := (float64(found.Count) / float64(totalRange)) * 100
+
+    time.Sleep(100 * time.Millisecond)
     fmt.Printf("\n\n!!! FOUND MATCH !!!\n")
-    fmt.Printf("Total Attempts: %d keys\n", found.Count)
-    fmt.Printf("Time Taken    : %s\n", elapsed)
-    fmt.Printf("Keys/second   : %.2f\n", float64(found.Count)/elapsed.Seconds()) // Tambahan metrik kecepatan
+    fmt.Printf("Total Attempts : %d keys\n", found.Count)
+    fmt.Printf("Coverage       : %.6f%% of total range\n", finalPercentage)
+    fmt.Printf("Time Taken     : %s\n", elapsed)
+    fmt.Printf("Keys/second    : %.2f\n", float64(found.Count)/elapsed.Seconds())
     fmt.Println("-------------------------------------------------------------")
     fmt.Printf("PrivKey : %s\n", found.PrivKey)
     fmt.Printf("Hash160 : %x\n", found.Hash160)
