@@ -1,0 +1,128 @@
+package main
+
+import (
+    "crypto/sha256"
+    "encoding/hex"
+    "flag" // Tambahkan import flag
+    "fmt"
+    "strings"
+    "sync/atomic"
+    "time"
+
+    "github.com/btcsuite/btcd/btcec/v2"
+    "golang.org/x/crypto/ripemd160"
+
+    "btc-go/random"
+)
+
+type Result struct {
+    PrivKey string
+    Hash160 []byte
+    Count   uint64
+}
+
+func main() {
+    // --- MODIFIKASI: Membaca argumen dari command line ---
+    // Mendefinisikan flag -t dengan nilai default 3 jika tidak diisi
+    numWorkers := flag.Int("t", 3, "jumlah thread (worker) yang akan digunakan")
+    flag.Parse()
+
+    // Validasi sederhana agar worker tidak 0 atau negatif
+    if *numWorkers <= 0 {
+        fmt.Println("Error: Jumlah worker harus lebih dari 0")
+        return
+    }
+    
+    targetHex := "4990d9"
+                  
+    targetBytes, _ := hex.DecodeString(targetHex)
+    
+    fmt.Printf("Searching for Hash160 starting with: %s\n", targetHex)
+    // Menampilkan jumlah worker sesuai input command line
+    fmt.Printf("Running with %d threads (Full Parallel)...\n", *numWorkers)
+    fmt.Println("-------------------------------------------------------------")
+
+    var totalCounter uint64 = 0
+    
+    resultChan := make(chan Result, 1)
+    stopChan := make(chan struct{})
+
+    start := time.Now()
+
+    // Launcher Worker
+    // Menggunakan *numWorkers (pointer value) karena flag mengembalikan pointer
+    for i := 0; i < *numWorkers; i++ {
+        go func(workerID int) {
+            // --- OPTIMASI 1: Generator Lokal per Worker ---
+            // Seed dibuat unik per worker berdasarkan ID
+            localRng := random.NewHybrid(12345 + uint32(workerID))
+            
+            ripemd160Hasher := ripemd160.New()
+            
+            for {
+                select {
+                case <-stopChan:
+                    return
+                default:
+                    currentCount := atomic.AddUint64(&totalCounter, 1)
+
+                    // --- TANPA LOCK ---
+                    combined := localRng.CombineAllHex()
+
+                    fullHex := strings.Repeat("0", 46) + combined
+                    
+                    privKeyBytes, err := hex.DecodeString(fullHex)
+                    if err != nil {
+                        continue
+                    }
+
+                    // Generate Public Key
+                    _, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
+                    pubKeyBytes := pubKey.SerializeCompressed()
+                    
+                    // Hashing Langsung ke Hash160
+                    sha256Hash := sha256.Sum256(pubKeyBytes)
+                    
+                    // Reset hasher sebelum dipakai ulang (penting!)
+                    ripemd160Hasher.Reset()
+                    ripemd160Hasher.Write(sha256Hash[:])
+                    hash160 := ripemd160Hasher.Sum(nil)
+
+                    // --- OPTIMASI: Bandingkan Byte Langsung ---
+                    if hash160[0] == targetBytes[0] && 
+                       hash160[1] == targetBytes[1] && 
+                       hash160[2] == targetBytes[2] {
+                        
+                        resultChan <- Result{
+                            PrivKey: fullHex,
+                            Hash160: hash160,
+                            Count:   currentCount,
+                        }
+                        return
+                    }
+
+                    // Log Progress (hanya worker 0)
+                    if workerID == 0 && currentCount%100000 == 0 {
+                         fmt.Printf("\rSearched %d keys...", currentCount)
+                    }
+                }
+            }
+        }(i)
+    }
+
+    // Tunggu hasil
+    found := <-resultChan
+    close(stopChan)
+
+    elapsed := time.Since(start)
+    
+    time.Sleep(100 * time.Millisecond) 
+    fmt.Printf("\n\n!!! FOUND MATCH !!!\n")
+    fmt.Printf("Total Attempts: %d keys\n", found.Count)
+    fmt.Printf("Time Taken    : %s\n", elapsed)
+    fmt.Printf("Keys/second   : %.2f\n", float64(found.Count)/elapsed.Seconds())
+    fmt.Println("-------------------------------------------------------------")
+    fmt.Printf("PrivKey : %s\n", found.PrivKey)
+    fmt.Printf("Hash160 : %x\n", found.Hash160)
+    fmt.Println("-------------------------------------------------------------")
+}
