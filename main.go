@@ -22,9 +22,9 @@ type Result struct {
 
 func main() {
     // Konfigurasi jumlah thread (worker)
-    numWorkers := 20
+    numWorkers := 4
 
-    targetHex := "4990d97f"
+    targetHex := "b7f411"
 
     targetBytes, _ := hex.DecodeString(targetHex)
 
