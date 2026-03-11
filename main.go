@@ -22,7 +22,7 @@ type Result struct {
 
 func main() {
     // Konfigurasi jumlah thread (worker)
-    numWorkers := 3
+    numWorkers := 20
     
     // Hapus inisialisasi global h, karena akan dibuat lokal per worker
     // h := random.NewHybrid(12345) 
