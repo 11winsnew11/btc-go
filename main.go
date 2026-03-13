@@ -3,6 +3,7 @@ package main
 import (
     "crypto/sha256"
     "encoding/hex"
+    "flag" 
     "fmt"
     "strings"
     "sync/atomic"
@@ -21,20 +22,23 @@ type Result struct {
 }
 
 func main() {
-    // Konfigurasi jumlah thread (worker)
-    numWorkers := 4
+    numWorkers := flag.Int("t", 4, "Jumlah thread (worker) yang digunakan")
+    flag.Parse() 
 
-    targetHex := "b7f411"
+    if *numWorkers <= 0 {
+        *numWorkers = 1
+    }
+
+    targetHex := "a21d8960"
 
     targetBytes, _ := hex.DecodeString(targetHex)
 
-    // --- PERHITUNGAN RANGE ---
-    seqRange := uint64(16) 
-    randomRange := uint64(16777216) 
-    totalRange := seqRange * randomRange 
+    seqRange := uint64(16)
+    randomRange := uint64(16777216)
+    totalRange := seqRange * randomRange
 
     fmt.Printf("Searching for Hash160 starting with: %s\n", targetHex)
-    fmt.Printf("Running with %d threads (Full Parallel)...\n", numWorkers)
+    fmt.Printf("Running with %d threads (Full Parallel)...\n", *numWorkers)
     fmt.Printf("Total Search Space (Range): %d unique keys\n", totalRange)
     fmt.Println("-------------------------------------------------------------")
 
@@ -45,10 +49,8 @@ func main() {
 
     start := time.Now()
 
-    // Launcher Worker
-    for i := 0; i < numWorkers; i++ {
+    for i := 0; i < *numWorkers; i++ {
         go func(workerID int) {
-            // Generator Lokal per Worker
             localRng := random.NewHybrid(12345 + uint32(workerID))
 
             ripemd160Hasher := ripemd160.New()
@@ -58,7 +60,6 @@ func main() {
                 case <-stopChan:
                     return
                 default:
-                    // Increment counter secara atomik
                     currentCount := atomic.AddUint64(&totalCounter, 1)
 
                     combined := localRng.CombineAllHex()
@@ -70,21 +71,19 @@ func main() {
                         continue
                     }
 
-                    // Generate Public Key
                     _, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
                     pubKeyBytes := pubKey.SerializeCompressed()
 
-                    // Hashing Langsung ke Hash160
                     sha256Hash := sha256.Sum256(pubKeyBytes)
 
                     ripemd160Hasher.Reset()
                     ripemd160Hasher.Write(sha256Hash[:])
                     hash160 := ripemd160Hasher.Sum(nil)
 
-                    // Bandingkan Byte Langsung
                     if hash160[0] == targetBytes[0] &&
                         hash160[1] == targetBytes[1] &&
-                        hash160[2] == targetBytes[2] {
+                        hash160[2] == targetBytes[2] && 
+                        hash160[3] == targetBytes[3] {
 
                         resultChan <- Result{
                             PrivKey: fullHex,
@@ -94,11 +93,8 @@ func main() {
                         return
                     }
 
-                    // Log Progress (hanya worker 0)
                     if workerID == 0 && currentCount%100000 == 0 {
-                        // --- HITUNG PERSENTASE ---
                         percentage := (float64(currentCount) / float64(totalRange)) * 100
-                        // Format tampilan: Counter / Total (Persentase%)
                         fmt.Printf("\rSearched %d / %d keys (%.4f%%)...", currentCount, totalRange, percentage)
                     }
                 }
@@ -106,13 +102,11 @@ func main() {
         }(i)
     }
 
-    // Tunggu hasil
     found := <-resultChan
     close(stopChan)
 
     elapsed := time.Since(start)
 
-    // Hitung persentase akhir
     finalPercentage := (float64(found.Count) / float64(totalRange)) * 100
 
     time.Sleep(100 * time.Millisecond)
