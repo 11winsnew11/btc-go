@@ -32,10 +32,10 @@ func main() {
         *numWorkers = 1
     }
 
-    targetHex := "e23f1e06"
+    targetHex := "801db3f6"
                   
     targetBytes, _ := hex.DecodeString(targetHex)
-
+ 
     seqRange := uint64(16)
     randomRange := uint64(16777216)
     totalRange := seqRange * randomRange
