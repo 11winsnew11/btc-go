@@ -32,8 +32,8 @@ func main() {
         *numWorkers = 1
     }
 
-    targetHex := "cbdebfaa"
-
+    targetHex := "e23f1e06"
+                  
     targetBytes, _ := hex.DecodeString(targetHex)
 
     seqRange := uint64(16)
