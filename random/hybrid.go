@@ -10,7 +10,7 @@ type Hybrid struct {
 func NewHybrid(seed uint32) *Hybrid {
     return &Hybrid{
         rng:    New(seed),
-        seqPos: 0xa0, 
+        seqPos: 0xb0, 
     }
 }
 
@@ -19,8 +19,8 @@ func (h *Hybrid) Gen2DigitHex() string {
 
     h.seqPos++
     
-    if h.seqPos > 0xaf {
-        h.seqPos = 0xa0
+    if h.seqPos > 0xbf {
+        h.seqPos = 0xb0
     }
 
     return fmt.Sprintf("%02x", current)
