@@ -29,7 +29,7 @@ func main() {
         *numWorkers = 1
     }
 
-    targetHex := "a21d8960"
+    targetHex := "cbdebfaa"
 
     targetBytes, _ := hex.DecodeString(targetHex)
 
