@@ -110,7 +110,7 @@ func main() {
                     hex1 := hex.EncodeToString(hash160[:9])
                     analyzer := mod.NewHexAnalyzer(hex1, targetHex2, "worker_check")
                     analysis := analyzer.Process()
-                    isSimilarityMatch := analysis.BitSimilarity >= 0.56 && analysis.BitSimilarity <= 0.56
+                    isSimilarityMatch := analysis.BitSimilarity >= 0.56 && analysis.BitSimilarity <= 0.57
                     isEntropyMatch := analysis.XorEntropy == 3.1699 
 
                     if isSimilarityMatch && isEntropyMatch {
