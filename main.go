@@ -1,10 +1,12 @@
 package main
 
 import (
-	"crypto/sha256"
+    "crypto/sha256" // FIX 1: Import yang kurang tadi
     "encoding/hex"
     "flag"
     "fmt"
+    "math"
+    "math/bits"
     "os"
     "os/signal"
     "sync/atomic"
@@ -14,21 +16,19 @@ import (
     "github.com/btcsuite/btcd/btcec/v2"
     "golang.org/x/crypto/ripemd160"
 
-    "btc-go/mod"      // Import modul simulate
     "btc-go/random"
 )
 
 type Result struct {
-    PrivKey string
-    Hash160 []byte
-    Count   uint64
-    Analysis mod.AnalysisResult // Menyimpan detail analisis
+    PrivKey    string
+    Hash160    []byte
+    Count      uint64
+    Similarity float64
+    Entropy    float64
 }
 
 func main() {
-    // Parameter target hex2 yang dicari (hardcoded sesuai permintaan)
-    targetHex2 := "bf7413e8df4e7a34ce" 
-    
+    targetHex2 := "bf7413e8df4e7a34ce"
     numWorkers := flag.Int("t", 4, "Jumlah thread (worker) yang digunakan")
     flag.Parse()
 
@@ -36,28 +36,31 @@ func main() {
         *numWorkers = 1
     }
 
-    // Decode target hex2 untuk referensi (opsional, karena modul simulate menerima string)
-    _, err := hex.DecodeString(targetHex2)
+    targetBytes, err := hex.DecodeString(targetHex2)
     if err != nil {
-        fmt.Printf("Error: Target hex2 tidak valid (%v)\n", err)
+        fmt.Printf("Error: Target hex tidak valid (%v)\n", err)
         return
     }
 
-    totalRange := uint64(1 << 31)
+    targetLen := len(targetBytes)
+    totalBits := targetLen * 8
 
-    fmt.Printf("Searching for Hash160 matching criteria...\n")
-    fmt.Printf("Target Comparison (Hex2): %s\n", targetHex2)
-    fmt.Printf("Criteria: BitSimilarity 0.55-0.57, XorEntropy 1.699\n")
-    fmt.Printf("Running with %d threads (Continuous Mode)...\n", *numWorkers)
-    fmt.Printf("Search Space Range: 0x80000000 - 0xFFFFFFFF\n")
+    // Kalkulasi Rentang Hamming untuk Similarity 0.55 - 0.57
+    // Hamming = TotalBits * (1 - Similarity)
+    minHamming := 27
+    maxHamming := 38
+
+    fmt.Printf("Searching with Optimized Filter...\n")
+    fmt.Printf("Target (Hex2): %s\n", targetHex2)
+    fmt.Printf("Criteria: BitSimilarity 0.55-0.57 (Hamming %d-%d), Entropy ~1.699\n", minHamming, maxHamming)
+    fmt.Printf("Running with %d threads...\n", *numWorkers)
     fmt.Println("-------------------------------------------------------------")
 
     var totalCounter uint64 = 0
-    var foundCounter uint64 = 0
+    // FIX 2: Hapus variabel 'foundCounter' yang tidak terpakai
 
     resultChan := make(chan Result, 100)
     stopChan := make(chan struct{})
-
     start := time.Now()
 
     sigChan := make(chan os.Signal, 1)
@@ -67,118 +70,129 @@ func main() {
     go func() {
         for res := range resultChan {
             elapsed := time.Since(start)
-            // Menggunakan counter dari hasil worker untuk kalkulasi akurat
             keysPerSec := float64(res.Count) / elapsed.Seconds()
 
             fmt.Printf("\n\n!!! FOUND MATCH !!!\n")
-            fmt.Printf("Found Count    : %d\n", atomic.AddUint64(&foundCounter, 1))
             fmt.Printf("Total Attempts : %d keys\n", res.Count)
-            fmt.Printf("Time Taken     : %s\n", elapsed.Round(time.Millisecond))
             fmt.Printf("Keys/second    : %.2f\n", keysPerSec)
             fmt.Println("-------------------------------------------------------------")
             fmt.Printf("PrivKey        : %s\n", res.PrivKey)
-            fmt.Printf("Hash160 (Hex1) : %x\n", res.Hash160[:9]) // Menampilkan 9 bytes pertama
-            fmt.Printf("Target  (Hex2) : %s\n", targetHex2)
+            fmt.Printf("Hash160 (Hex1) : %x\n", res.Hash160[:targetLen])
+            fmt.Printf("Bit Similarity : %.4f\n", res.Similarity)
+            fmt.Printf("XOR Entropy    : %.4f\n", res.Entropy)
             fmt.Println("-------------------------------------------------------------")
-            fmt.Printf("Bit Similarity : %.4f\n", res.Analysis.BitSimilarity)
-            fmt.Printf("XOR Entropy    : %.4f\n", res.Analysis.XorEntropy)
-            fmt.Printf("Visual Diff    : %s\n", res.Analysis.VisualDiff)
-            fmt.Println("-------------------------------------------------------------")
-            fmt.Printf("Continuing search...\n")
         }
     }()
 
-    // Memulai Worker
+    // Worker
     for i := 0; i < *numWorkers; i++ {
         go func(workerID int) {
             localRng := random.NewHybrid(uint32(workerID) + uint32(time.Now().UnixNano()))
-
-            // Reusable RIPEMD160 hasher
             ripemd160Hasher := ripemd160.New()
+            xorBuf := make([]byte, targetLen)
 
             for {
                 select {
                 case <-stopChan:
                     return
                 default:
-                    // Counter global
                     currentCount := atomic.AddUint64(&totalCounter, 1)
-                    
-                    // Generate Private Key Candidate
+
+                    // Generate Private Key
                     combined := localRng.CombineAllHex()
-                    // Padding untuk membuat 64 karakter hex (32 bytes)
-                    fullHex := "0000000000000000000000000000000000000000000000" + combined 
-                    // Perhatikan: Panjang 'combined' diasumsikan 18 char di sini agar total 64.
-                    // Jika combined berubah panjangnya, perlu penyesuaian string padding.
-                    // Untuk amannya bisa gunakan strings.Repeat("0", 64-len(combined)) + combined
+                    // Pastikan padding '0' benar (46 nol + 18 char combined = 64 char)
+                    fullHex := "0000000000000000000000000000000000000000000000" + combined
 
                     privKeyBytes, err := hex.DecodeString(fullHex)
                     if err != nil {
                         continue
                     }
 
-                    // Proses ECDSA Public Key
+                    // Generate Public Key & Hash160
                     _, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
                     pubKeyBytes := pubKey.SerializeCompressed()
 
-                    // Hash: SHA256 -> RIPEMD160
+                    // SHA256
                     sha256Hash := sha256.Sum256(pubKeyBytes)
 
+                    // RIPEMD160
                     ripemd160Hasher.Reset()
                     ripemd160Hasher.Write(sha256Hash[:])
                     hash160 := ripemd160Hasher.Sum(nil)
 
-                    // --- MODIFIKASI DIMULAI DI SINI ---
-                    
-                    // 1. Ambil 9 bytes pertama sebagai hex1 (string)
-                    // hash160 adalah slice byte, jadi kita ambil slice [:9]
-                    hex1 := hex.EncodeToString(hash160[:9])
+                    // --- OPTIMIZED CHECK ---
+                    h1 := hash160[:targetLen]
 
-                    // 2. Inisialisasi Analyzer dengan hex1 (hasil hash) dan hex2 (target)
-                    analyzer := mod.NewHexAnalyzer(hex1, targetHex2, "worker_check")
-                    
-                    // 3. Proses Analisis
-                    analysis := analyzer.Process()
+                    // 1. Hitung Hamming Distance (Bit Difference)
+                    hammingDist := 0
+                    validRange := true
 
-                    // 4. Cek Kondisi
-                    // Bit Similarity: 0.55 - 0.57
-                    // Xor Entropy: 1.699
-                    isSimilarityMatch := analysis.BitSimilarity >= 0.55 && analysis.BitSimilarity <= 0.57
-                    isEntropyMatch := analysis.XorEntropy == 1.699 // Sudah dibulatkan 4 desimal di simulate.go
+                    for k := 0; k < targetLen; k++ {
+                        xorVal := h1[k] ^ targetBytes[k]
+                        xorBuf[k] = xorVal
+                        hammingDist += bits.OnesCount8(xorVal)
 
-                    if isSimilarityMatch && isEntropyMatch {
-                        resultChan <- Result{
-                            PrivKey:  fullHex,
-                            Hash160:  hash160,
-                            Count:    currentCount,
-                            Analysis: analysis,
+                        // Early exit: jika hamming sudah keluar dari jalur, hentikan loop
+                        if hammingDist > maxHamming {
+                            validRange = false
+                            break
                         }
                     }
 
-                    // --- MODIFIKASI SELESAI ---
+                    // 2. Filter Hamming (Target: 31 atau 32)
+                    if validRange && hammingDist >= minHamming && hammingDist <= maxHamming {
 
-                    // Progress report
+                        // 3. Hitung Entropy Hanya jika Hamming cocok
+                        entropy := calculateEntropyFast(xorBuf)
+
+                        // Cek Entropy 1.699
+                        if math.Round(entropy*1000) == 1699 {
+                            similarity := float64(totalBits-hammingDist) / float64(totalBits)
+
+                            resultChan <- Result{
+                                PrivKey:    fullHex,
+                                Hash160:    hash160,
+                                Count:      currentCount,
+                                Similarity: similarity,
+                                Entropy:    entropy,
+                            }
+                        }
+                    }
+
                     if workerID == 0 && currentCount%100000 == 0 {
-                        percentage := (float64(currentCount) / float64(totalRange)) * 100
-                        fmt.Printf("\rSearched %d keys (%.4f%% of range)...", currentCount, percentage)
+                        fmt.Printf("\rSpeed: %.2f keys/sec | Scanned: %d", float64(currentCount)/time.Since(start).Seconds(), currentCount)
                     }
                 }
             }
         }(i)
     }
 
-    // Menunggu sinyal stop (Ctrl+C)
     <-sigChan
-    fmt.Println("\n\nStopping search...")
+    fmt.Println("\n\nStopping...")
     close(stopChan)
-
     time.Sleep(500 * time.Millisecond)
 
     finalCount := atomic.LoadUint64(&totalCounter)
-    finalFound := atomic.LoadUint64(&foundCounter)
     elapsed := time.Since(start)
+    fmt.Printf("Total keys: %d | Avg Speed: %.2f k/s\n", finalCount, float64(finalCount)/elapsed.Seconds())
+}
 
-    fmt.Printf("Total keys scanned: %d\n", finalCount)
-    fmt.Printf("Total matches found: %d\n", finalFound)
-    fmt.Printf("Average speed: %.2f keys/sec\n", float64(finalCount)/elapsed.Seconds())
+func calculateEntropyFast(data []byte) float64 {
+    if len(data) == 0 {
+        return 0.0
+    }
+    counts := make(map[byte]int, 256)
+    for _, b := range data {
+        counts[b]++
+    }
+
+    total := float64(len(data))
+    entropy := 0.0
+    for _, c := range counts {
+        p := float64(c) / total
+        if p > 0 {
+            entropy -= p * math.Log2(p)
+        }
+    }
+    return math.Round(entropy*10000) / 10000
 }
