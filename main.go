@@ -7,6 +7,7 @@ import (
     "fmt"
     "os"
     "os/signal"
+    "strings"
     "sync/atomic"
     "syscall"
     "time"
@@ -14,7 +15,7 @@ import (
     "github.com/btcsuite/btcd/btcec/v2"
     "golang.org/x/crypto/ripemd160"
 
-    "btc-go/mod"      
+    "btc-go/mod"
     "btc-go/random"
 )
 
@@ -22,11 +23,11 @@ type Result struct {
     PrivKey string
     Hash160 []byte
     Count   uint64
-    Analysis mod.AnalysisResult 
+    Analysis mod.AnalysisResult
 }
 
 func main() {
-    targetHex2 := "bf7413e8df4e7a34ce" 
+    targetHex2 := "bf7413e8df4e7a34ce"
     numWorkers := flag.Int("t", 4, "Jumlah thread (worker) yang digunakan")
     flag.Parse()
 
@@ -44,7 +45,11 @@ func main() {
 
     fmt.Printf("Searching for Hash160 matching criteria...\n")
     fmt.Printf("Target Comparison (Hex2): %s\n", targetHex2)
-    fmt.Printf("Criteria: BitSimilarity 0.55-0.57, XorEntropy 3.1699\n")
+    fmt.Printf("Criteria:\n")
+    fmt.Printf("  - BitSimilarity: 0.57-0.58\n")
+    fmt.Printf("  - XorEntropy   : 3.1699\n")
+    fmt.Printf("  - XorSum       : 1300-1350\n")
+    fmt.Printf("  - VisualDiff   : 7 Acak (!/#) + 2 Konstan (##) [Contoh: !#!!!#!##]\n") 
     fmt.Printf("Running with %d threads (Continuous Mode)...\n", *numWorkers)
     fmt.Printf("Search Space Range: 0x80000000 - 0xFFFFFFFF\n")
     fmt.Println("-------------------------------------------------------------")
@@ -70,11 +75,12 @@ func main() {
             fmt.Printf("Keys/second    : %.2f\n", keysPerSec)
             fmt.Println("-------------------------------------------------------------")
             fmt.Printf("PrivKey        : %s\n", res.PrivKey)
-            fmt.Printf("Hash160 (Hex1) : %x\n", res.Hash160[:9]) 
+            fmt.Printf("Hash160 (Hex1) : %x\n", res.Hash160[:9])
             fmt.Printf("Target  (Hex2) : %s\n", targetHex2)
             fmt.Println("-------------------------------------------------------------")
             fmt.Printf("Bit Similarity : %.4f\n", res.Analysis.BitSimilarity)
             fmt.Printf("XOR Entropy    : %.4f\n", res.Analysis.XorEntropy)
+            fmt.Printf("XOR Sum        : %d\n", res.Analysis.XorSum)
             fmt.Printf("Visual Diff    : %s\n", res.Analysis.VisualDiff)
             fmt.Println("-------------------------------------------------------------")
             fmt.Printf("Continuing search...\n")
@@ -93,7 +99,7 @@ func main() {
                 default:
                     currentCount := atomic.AddUint64(&totalCounter, 1)
                     combined := localRng.CombineAllHex()
-                    fullHex := "0000000000000000000000000000000000000000000000" + combined 
+                    fullHex := "0000000000000000000000000000000000000000000000" + combined
 
                     privKeyBytes, err := hex.DecodeString(fullHex)
                     if err != nil {
@@ -107,13 +113,29 @@ func main() {
                     ripemd160Hasher.Reset()
                     ripemd160Hasher.Write(sha256Hash[:])
                     hash160 := ripemd160Hasher.Sum(nil)
+                    
                     hex1 := hex.EncodeToString(hash160[:9])
+                    
                     analyzer := mod.NewHexAnalyzer(hex1, targetHex2, "worker_check")
                     analysis := analyzer.Process()
-                    isSimilarityMatch := analysis.BitSimilarity >= 0.56 && analysis.BitSimilarity <= 0.57
-                    isEntropyMatch := analysis.XorEntropy == 3.1699 
 
-                    if isSimilarityMatch && isEntropyMatch {
+                    isSimilarityMatch := analysis.BitSimilarity >= 0.57 && analysis.BitSimilarity <= 0.58
+                    
+                    isEntropyMatch := analysis.XorEntropy == 3.1699
+                    isXorSumMatch := analysis.XorSum >= 1300 && analysis.XorSum <= 1350
+
+                    visual := analysis.VisualDiff
+                    
+                    isVisualMatch := false
+                    if len(visual) == 9 && strings.HasSuffix(visual, "##") {
+                        prefix := visual[:7]
+                        if !strings.ContainsAny(prefix, "=") {
+                            isVisualMatch = true
+                        }
+                    }
+
+                    // Gabungkan semua kondisi
+                    if isSimilarityMatch && isEntropyMatch && isXorSumMatch && isVisualMatch {
                         resultChan <- Result{
                             PrivKey:  fullHex,
                             Hash160:  hash160,
