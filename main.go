@@ -146,7 +146,7 @@ func main() {
                         entropy := calculateEntropyFast(xorBuf)
 
                         // Cek Entropy 1.699
-                        if math.Round(entropy*1000) == 1699 {
+                        if math.Round(entropy*1000) == 0 {
                             similarity := float64(totalBits-hammingDist) / float64(totalBits)
 
                             resultChan <- Result{
