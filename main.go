@@ -1,14 +1,13 @@
 package main
 
 import (
-    "bytes"
-    "crypto/sha256"
     "encoding/hex"
     "flag"
     "fmt"
+    "math"
+    "math/bits"
     "os"
     "os/signal"
-    "strings"
     "sync/atomic"
     "syscall"
     "time"
@@ -20,13 +19,15 @@ import (
 )
 
 type Result struct {
-    PrivKey string
-    Hash160 []byte
-    Count   uint64
+    PrivKey      string
+    Hash160      []byte
+    Count        uint64
+    Similarity   float64
+    Entropy      float64
 }
 
 func main() {
-    targetInput := flag.String("target", "801db3f6", "Target Hash160 prefix (hex)")
+    targetHex2 := "bf7413e8df4e7a34ce"
     numWorkers := flag.Int("t", 4, "Jumlah thread (worker) yang digunakan")
     flag.Parse()
 
@@ -34,33 +35,29 @@ func main() {
         *numWorkers = 1
     }
 
-    targetHex := *targetInput
-    targetBytes, err := hex.DecodeString(targetHex)
+    // Pre-calculate target bytes HANYA SEKALI di awal
+    targetBytes, err := hex.DecodeString(targetHex2)
     if err != nil {
         fmt.Printf("Error: Target hex tidak valid (%v)\n", err)
         return
     }
+    
+    targetLen := len(targetBytes) 
+    totalBits := targetLen * 8
 
-    difficulty := 1.0
-    for i := 0; i < len(targetBytes); i++ {
-        difficulty *= 256.0
-    }
+    minHamming := 31
+    maxHamming := 32
 
-    totalRange := uint64(1 << 31) 
-
-    fmt.Printf("Searching for Hash160 starting with: %s\n", targetHex)
-    fmt.Printf("Running with %d threads (Continuous Mode)...\n", *numWorkers)
-    fmt.Printf("Search Space Range: 0x80000000 - 0xFFFFFFFF\n")
-    fmt.Printf("Total Search Space: %d unique keys\n", totalRange)
-    fmt.Printf("Target Difficulty: 1 in %.0f keys\n", difficulty)
+    fmt.Printf("Searching with Optimized Filter...\n")
+    fmt.Printf("Target (Hex2): %s\n", targetHex2)
+    fmt.Printf("Criteria: BitSimilarity 0.55-0.57 (Hamming %d-%d), Entropy ~1.699\n", minHamming, maxHamming)
+    fmt.Printf("Running with %d threads...\n", *numWorkers)
     fmt.Println("-------------------------------------------------------------")
 
     var totalCounter uint64 = 0
     var foundCounter uint64 = 0
-
     resultChan := make(chan Result, 100)
     stopChan := make(chan struct{})
-
     start := time.Now()
 
     sigChan := make(chan os.Signal, 1)
@@ -73,24 +70,25 @@ func main() {
             keysPerSec := float64(res.Count) / elapsed.Seconds()
 
             fmt.Printf("\n\n!!! FOUND MATCH !!!\n")
-            fmt.Printf("Found Count    : %d\n", atomic.AddUint64(&foundCounter, 1))
             fmt.Printf("Total Attempts : %d keys\n", res.Count)
-            fmt.Printf("Time Taken     : %s\n", elapsed.Round(time.Millisecond))
             fmt.Printf("Keys/second    : %.2f\n", keysPerSec)
             fmt.Println("-------------------------------------------------------------")
-            fmt.Printf("PrivKey : %s\n", res.PrivKey)
-            fmt.Printf("Hash160 : %x\n", res.Hash160)
+            fmt.Printf("PrivKey        : %s\n", res.PrivKey)
+            fmt.Printf("Hash160 (Hex1) : %x\n", res.Hash160[:targetLen])
+            fmt.Printf("Bit Similarity : %.4f\n", res.Similarity)
+            fmt.Printf("XOR Entropy    : %.4f\n", res.Entropy)
             fmt.Println("-------------------------------------------------------------")
-            fmt.Printf("Continuing search...\n")
         }
     }()
 
-    // Memulai Worker
+    // Worker
     for i := 0; i < *numWorkers; i++ {
         go func(workerID int) {
             localRng := random.NewHybrid(uint32(workerID) + uint32(time.Now().UnixNano()))
-            
             ripemd160Hasher := ripemd160.New()
+
+            // Pre-allocate slice untuk XOR result agar tidak alloc terus menerus
+            xorBuf := make([]byte, targetLen)
 
             for {
                 select {
@@ -98,55 +96,100 @@ func main() {
                     return
                 default:
                     currentCount := atomic.AddUint64(&totalCounter, 1)
-                    combined := localRng.CombineAllHex()
-                    fullHex := strings.Repeat("0", 46) + combined
 
+                    // 1. Generate Private Key
+                    combined := localRng.CombineAllHex()
+                    fullHex := "0000000000000000000000000000000000000000000000" + combined
+                    
                     privKeyBytes, err := hex.DecodeString(fullHex)
                     if err != nil {
                         continue
                     }
 
-                    // Proses ECDSA Public Key
+                    // 2. Generate Public Key & Hash160
                     _, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
                     pubKeyBytes := pubKey.SerializeCompressed()
 
-                    // Hash: SHA256 -> RIPEMD160
+                    // SHA256
                     sha256Hash := sha256.Sum256(pubKeyBytes)
-
+                    
+                    // RIPEMD160
                     ripemd160Hasher.Reset()
                     ripemd160Hasher.Write(sha256Hash[:])
                     hash160 := ripemd160Hasher.Sum(nil)
 
-                    if bytes.HasPrefix(hash160, targetBytes) {
-                        resultChan <- Result{
-                            PrivKey: fullHex,
-                            Hash160: hash160,
-                            Count:   currentCount,
+                    // --- OPTIMIZED CHECK ---
+
+                    // Ambil 9 bytes pertama
+                    h1 := hash160[:targetLen]
+                    hammingDist := 0
+                    validRange := true
+                    
+                    for k := 0; k < targetLen; k++ {
+                        xorVal := h1[k] ^ targetBytes[k]
+                        xorBuf[k] = xorVal 
+                        hammingDist += bits.OnesCount8(xorVal)
+                        
+                        if hammingDist > maxHamming {
+                            validRange = false
+                            break
                         }
                     }
 
-                    // Progress report
+                    if validRange && hammingDist >= minHamming && hammingDist <= maxHamming {
+                        
+                        entropy := calculateEntropyFast(xorBuf)
+                        
+                        if math.Round(entropy*1000) == 1699 {
+                            
+                            similarity := float64(totalBits-hammingDist) / float64(totalBits)
+                            
+                            resultChan <- Result{
+                                PrivKey:    fullHex,
+                                Hash160:    hash160,
+                                Count:      currentCount,
+                                Similarity: similarity,
+                                Entropy:    entropy,
+                            }
+                        }
+                    }
+
                     if workerID == 0 && currentCount%100000 == 0 {
-                        percentage := (float64(currentCount) / float64(totalRange)) * 100
-                        fmt.Printf("\rSearched %d keys (%.4f%% of range)...", currentCount, percentage)
+                        fmt.Printf("\rSpeed: %.2f keys/sec | Scanned: %d", 
+                            float64(currentCount)/time.Since(start).Seconds(), currentCount)
                     }
                 }
             }
         }(i)
     }
 
-    // Menunggu sinyal stop (Ctrl+C)
     <-sigChan
-    fmt.Println("\n\nStopping search...")
+    fmt.Println("\n\nStopping...")
     close(stopChan)
-    
     time.Sleep(500 * time.Millisecond)
     
     finalCount := atomic.LoadUint64(&totalCounter)
-    finalFound := atomic.LoadUint64(&foundCounter)
     elapsed := time.Since(start)
+    fmt.Printf("Total keys: %d | Avg Speed: %.2f k/s\n", finalCount, float64(finalCount)/elapsed.Seconds())
+}
+
+
+func calculateEntropyFast(data []byte) float64 {
+    if len(data) == 0 {
+        return 0.0
+    }
+    counts := make(map[byte]int, 256)
+    for _, b := range data {
+        counts[b]++
+    }
     
-    fmt.Printf("Total keys scanned: %d\n", finalCount)
-    fmt.Printf("Total matches found: %d\n", finalFound)
-    fmt.Printf("Average speed: %.2f keys/sec\n", float64(finalCount)/elapsed.Seconds())
+    total := float64(len(data))
+    entropy := 0.0
+    for _, c := range counts {
+        p := float64(c) / total
+        if p > 0 {
+            entropy -= p * math.Log2(p)
+        }
+    }
+    return math.Round(entropy*10000) / 10000
 }
