@@ -120,7 +120,7 @@ func main() {
                     // Hanya proses jika byte pertama hash160 adalah 0x3a
                     // Ini jauh lebih cepat daripada mengubah ke string hex dulu
                     // ============================================================
-                    if hash160[0] != 0x3a {
+                    if hash160[0] != 0x08 {
                         continue // Langsung skip jika tidak diawali 3a
                     }
 
@@ -137,7 +137,7 @@ func main() {
                     visual := analysis.VisualDiff
                     
                     isVisualMatch := false
-                    if len(visual) == 9 && strings.HasSuffix(visual, "#") {
+                    if len(visual) == 9 && strings.HasSuffix(visual, "!") {
                         prefix := visual[:8]
                         if !strings.ContainsAny(prefix, "=") {
                             isVisualMatch = true
