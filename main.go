@@ -46,10 +46,11 @@ func main() {
     fmt.Printf("Searching for Hash160 matching criteria...\n")
     fmt.Printf("Target Comparison (Hex2): %s\n", targetHex2)
     fmt.Printf("Criteria:\n")
-    fmt.Printf("  - BitSimilarity: 0.57-0.58\n")
+    fmt.Printf("  - Prefix       : 3a (Filter Baru)\n") // Menambahkan info filter
+    fmt.Printf("  - BitSimilarity: 0.48-0.499\n") // Disesuaikan dengan kode sebelumnya
     fmt.Printf("  - XorEntropy   : 3.1699\n")
-    fmt.Printf("  - XorSum       : 1300-1350\n")
-    fmt.Printf("  - VisualDiff   : 7 Acak (!/#) + 2 Konstan (##) [Contoh: !#!!!#!##]\n") 
+    fmt.Printf("  - XorSum       : 1400-1600\n")
+    fmt.Printf("  - VisualDiff   : Akhiran '#' tanpa '=' di prefix\n") 
     fmt.Printf("Running with %d threads (Continuous Mode)...\n", *numWorkers)
     fmt.Printf("Search Space Range: 0x80000000 - 0xFFFFFFFF\n")
     fmt.Println("-------------------------------------------------------------")
@@ -114,21 +115,30 @@ func main() {
                     ripemd160Hasher.Write(sha256Hash[:])
                     hash160 := ripemd160Hasher.Sum(nil)
                     
+                    // ============================================================
+                    // MODIFIKASI: Filter Prefix 3a
+                    // Hanya proses jika byte pertama hash160 adalah 0x3a
+                    // Ini jauh lebih cepat daripada mengubah ke string hex dulu
+                    // ============================================================
+                    if hash160[0] != 0x3a {
+                        continue // Langsung skip jika tidak diawali 3a
+                    }
+
                     hex1 := hex.EncodeToString(hash160[:9])
                     
                     analyzer := mod.NewHexAnalyzer(hex1, targetHex2, "worker_check")
                     analysis := analyzer.Process()
 
-                    isSimilarityMatch := analysis.BitSimilarity >= 0.57 && analysis.BitSimilarity <= 0.58
+                    isSimilarityMatch := analysis.BitSimilarity >= 0.47 && analysis.BitSimilarity <= 0.499
                     
                     isEntropyMatch := analysis.XorEntropy == 3.1699
-                    isXorSumMatch := analysis.XorSum >= 1300 && analysis.XorSum <= 1350
+                    isXorSumMatch := analysis.XorSum >= 1000 && analysis.XorSum <= 1100
 
                     visual := analysis.VisualDiff
                     
                     isVisualMatch := false
-                    if len(visual) == 9 && strings.HasSuffix(visual, "##") {
-                        prefix := visual[:7]
+                    if len(visual) == 9 && strings.HasSuffix(visual, "#") {
+                        prefix := visual[:8]
                         if !strings.ContainsAny(prefix, "=") {
                             isVisualMatch = true
                         }

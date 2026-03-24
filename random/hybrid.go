@@ -10,14 +10,14 @@ type Hybrid struct {
 func NewHybrid(seed uint32) *Hybrid {
     return &Hybrid{
         rng:    New(seed),
-        seqPos: seed | 0x80000000, 
+        seqPos: (seed | 0x85000000) & 0x85ffffff, 
     }
 }
 
 func (h *Hybrid) Gen8DigitHex() string {
     current := h.seqPos
     jump := h.rng.Next()
-    h.seqPos = (h.seqPos + jump) | 0x80000000
+    h.seqPos = ((h.seqPos + jump) | 0x85000000) & 0x85FFFFFF
     return fmt.Sprintf("%08x", current)
 }
 
