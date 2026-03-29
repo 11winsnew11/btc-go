@@ -1,179 +1,179 @@
 package main
 
 import (
-    "crypto/sha256"
-    "encoding/hex"
-    "flag"
-    "fmt"
-    "os"
-    "os/signal"
-    "strings"
-    "sync/atomic"
-    "syscall"
-    "time"
+	"crypto/sha256"
+	"encoding/hex"
+	"flag"
+	"fmt"
+	"os"
+	"os/signal"
+	"strings"
+	"sync/atomic"
+	"syscall"
+	"time"
 
-    "github.com/btcsuite/btcd/btcec/v2"
-    "golang.org/x/crypto/ripemd160"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"golang.org/x/crypto/ripemd160"
 
-    "btc-go/mod"
-    "btc-go/random"
+	"btc-go/mod"
+	"btc-go/random"
 )
 
 type Result struct {
-    PrivKey string
-    Hash160 []byte
-    Count   uint64
-    Analysis mod.AnalysisResult
+	PrivKey  string
+	Hash160  []byte
+	Count    uint64
+	Analysis mod.AnalysisResult
 }
 
 func main() {
-    targetHex2 := "bf7413e8df4e7a34ce"
-    numWorkers := flag.Int("t", 4, "Jumlah thread (worker) yang digunakan")
-    flag.Parse()
+	targetHex2 := "bf7413e8df4e7a34ce"
+	numWorkers := flag.Int("t", 4, "Jumlah thread (worker) yang digunakan")
+	flag.Parse()
 
-    if *numWorkers <= 0 {
-        *numWorkers = 1
-    }
+	if *numWorkers <= 0 {
+		*numWorkers = 1
+	}
 
-    _, err := hex.DecodeString(targetHex2)
-    if err != nil {
-        fmt.Printf("Error: Target hex2 tidak valid (%v)\n", err)
-        return
-    }
+	_, err := hex.DecodeString(targetHex2)
+	if err != nil {
+		fmt.Printf("Error: Target hex2 tidak valid (%v)\n", err)
+		return
+	}
 
-    totalRange := uint64(1 << 31)
+	totalRange := uint64(1 << 31)
 
-    fmt.Printf("Searching for Hash160 matching criteria...\n")
-    fmt.Printf("Target Comparison (Hex2): %s\n", targetHex2)
-    fmt.Printf("Criteria:\n")
-    fmt.Printf("  - Prefix       : 3a (Filter Baru)\n") // Menambahkan info filter
-    fmt.Printf("  - BitSimilarity: 0.48-0.499\n") // Disesuaikan dengan kode sebelumnya
-    fmt.Printf("  - XorEntropy   : 3.1699\n")
-    fmt.Printf("  - XorSum       : 1400-1600\n")
-    fmt.Printf("  - VisualDiff   : Akhiran '#' tanpa '=' di prefix\n") 
-    fmt.Printf("Running with %d threads (Continuous Mode)...\n", *numWorkers)
-    fmt.Printf("Search Space Range: 0x80000000 - 0xFFFFFFFF\n")
-    fmt.Println("-------------------------------------------------------------")
+	fmt.Printf("Searching for Hash160 matching criteria...\n")
+	fmt.Printf("Target Comparison (Hex2): %s\n", targetHex2)
+	fmt.Printf("Criteria:\n")
+	fmt.Printf("  - Prefix       : 3a (Filter Baru)\n") // Menambahkan info filter
+	fmt.Printf("  - BitSimilarity: 0.48-0.499\n")       // Disesuaikan dengan kode sebelumnya
+	fmt.Printf("  - XorEntropy   : 3.1699\n")
+	fmt.Printf("  - XorSum       : 1400-1600\n")
+	fmt.Printf("  - VisualDiff   : Akhiran '#' tanpa '=' di prefix\n")
+	fmt.Printf("Running with %d threads (Continuous Mode)...\n", *numWorkers)
+	fmt.Printf("Search Space Range: 0x80000000 - 0xFFFFFFFF\n")
+	fmt.Println("-------------------------------------------------------------")
 
-    var totalCounter uint64 = 0
-    var foundCounter uint64 = 0
+	var totalCounter uint64 = 0
+	var foundCounter uint64 = 0
 
-    resultChan := make(chan Result, 100)
-    stopChan := make(chan struct{})
-    start := time.Now()
-    sigChan := make(chan os.Signal, 1)
-    signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	resultChan := make(chan Result, 100)
+	stopChan := make(chan struct{})
+	start := time.Now()
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-    go func() {
-        for res := range resultChan {
-            elapsed := time.Since(start)
-            keysPerSec := float64(res.Count) / elapsed.Seconds()
+	go func() {
+		for res := range resultChan {
+			elapsed := time.Since(start)
+			keysPerSec := float64(res.Count) / elapsed.Seconds()
 
-            fmt.Printf("\n\n!!! FOUND MATCH !!!\n")
-            fmt.Printf("Found Count    : %d\n", atomic.AddUint64(&foundCounter, 1))
-            fmt.Printf("Total Attempts : %d keys\n", res.Count)
-            fmt.Printf("Time Taken     : %s\n", elapsed.Round(time.Millisecond))
-            fmt.Printf("Keys/second    : %.2f\n", keysPerSec)
-            fmt.Println("-------------------------------------------------------------")
-            fmt.Printf("PrivKey        : %s\n", res.PrivKey)
-            fmt.Printf("Hash160 (Hex1) : %x\n", res.Hash160[:9])
-            fmt.Printf("Target  (Hex2) : %s\n", targetHex2)
-            fmt.Println("-------------------------------------------------------------")
-            fmt.Printf("Bit Similarity : %.4f\n", res.Analysis.BitSimilarity)
-            fmt.Printf("XOR Entropy    : %.4f\n", res.Analysis.XorEntropy)
-            fmt.Printf("XOR Sum        : %d\n", res.Analysis.XorSum)
-            fmt.Printf("Visual Diff    : %s\n", res.Analysis.VisualDiff)
-            fmt.Println("-------------------------------------------------------------")
-            fmt.Printf("Continuing search...\n")
-        }
-    }()
+			fmt.Printf("\n\n!!! FOUND MATCH !!!\n")
+			fmt.Printf("Found Count    : %d\n", atomic.AddUint64(&foundCounter, 1))
+			fmt.Printf("Total Attempts : %d keys\n", res.Count)
+			fmt.Printf("Time Taken     : %s\n", elapsed.Round(time.Millisecond))
+			fmt.Printf("Keys/second    : %.2f\n", keysPerSec)
+			fmt.Println("-------------------------------------------------------------")
+			fmt.Printf("PrivKey        : %s\n", res.PrivKey)
+			fmt.Printf("Hash160 (Hex1) : %x\n", res.Hash160[:9])
+			fmt.Printf("Target  (Hex2) : %s\n", targetHex2)
+			fmt.Println("-------------------------------------------------------------")
+			fmt.Printf("Bit Similarity : %.4f\n", res.Analysis.BitSimilarity)
+			fmt.Printf("XOR Entropy    : %.4f\n", res.Analysis.XorEntropy)
+			fmt.Printf("XOR Sum        : %d\n", res.Analysis.XorSum)
+			fmt.Printf("Visual Diff    : %s\n", res.Analysis.VisualDiff)
+			fmt.Println("-------------------------------------------------------------")
+			fmt.Printf("Continuing search...\n")
+		}
+	}()
 
-    for i := 0; i < *numWorkers; i++ {
-        go func(workerID int) {
-            localRng := random.NewHybrid(uint32(workerID) + uint32(time.Now().UnixNano()))
-            ripemd160Hasher := ripemd160.New()
+	for i := 0; i < *numWorkers; i++ {
+		go func(workerID int) {
+			localRng := random.NewHybrid(uint32(workerID) + uint32(time.Now().UnixNano()))
+			ripemd160Hasher := ripemd160.New()
 
-            for {
-                select {
-                case <-stopChan:
-                    return
-                default:
-                    currentCount := atomic.AddUint64(&totalCounter, 1)
-                    combined := localRng.CombineAllHex()
-                    fullHex := "0000000000000000000000000000000000000000000000" + combined
+			for {
+				select {
+				case <-stopChan:
+					return
+				default:
+					currentCount := atomic.AddUint64(&totalCounter, 1)
+					combined := localRng.CombineAllHex()
+					fullHex := "0000000000000000000000000000000000000000000000" + combined
 
-                    privKeyBytes, err := hex.DecodeString(fullHex)
-                    if err != nil {
-                        continue
-                    }
+					privKeyBytes, err := hex.DecodeString(fullHex)
+					if err != nil {
+						continue
+					}
 
-                    _, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
-                    pubKeyBytes := pubKey.SerializeCompressed()
+					_, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
+					pubKeyBytes := pubKey.SerializeCompressed()
 
-                    sha256Hash := sha256.Sum256(pubKeyBytes)
-                    ripemd160Hasher.Reset()
-                    ripemd160Hasher.Write(sha256Hash[:])
-                    hash160 := ripemd160Hasher.Sum(nil)
-                    
-                    // ============================================================
-                    // MODIFIKASI: Filter Prefix 3a
-                    // Hanya proses jika byte pertama hash160 adalah 0x3a
-                    // Ini jauh lebih cepat daripada mengubah ke string hex dulu
-                    // ============================================================
-                    if hash160[0] != 0x08 {
-                        continue // Langsung skip jika tidak diawali 3a
-                    }
+					sha256Hash := sha256.Sum256(pubKeyBytes)
+					ripemd160Hasher.Reset()
+					ripemd160Hasher.Write(sha256Hash[:])
+					hash160 := ripemd160Hasher.Sum(nil)
 
-                    hex1 := hex.EncodeToString(hash160[:9])
-                    
-                    analyzer := mod.NewHexAnalyzer(hex1, targetHex2, "worker_check")
-                    analysis := analyzer.Process()
+					// ============================================================
+					// MODIFIKASI: Filter Prefix 3a
+					// Hanya proses jika byte pertama hash160 adalah 0x3a
+					// Ini jauh lebih cepat daripada mengubah ke string hex dulu
+					// ============================================================
+					if hash160[0] != 0x3a {
+						continue // Langsung skip jika tidak diawali 3a
+					}
 
-                    isSimilarityMatch := analysis.BitSimilarity >= 0.47 && analysis.BitSimilarity <= 0.499
-                    
-                    isEntropyMatch := analysis.XorEntropy == 3.1699
-                    isXorSumMatch := analysis.XorSum >= 1000 && analysis.XorSum <= 1100
+					hex1 := hex.EncodeToString(hash160[:9])
 
-                    visual := analysis.VisualDiff
-                    
-                    isVisualMatch := false
-                    if len(visual) == 9 && strings.HasSuffix(visual, "!") {
-                        prefix := visual[:8]
-                        if !strings.ContainsAny(prefix, "=") {
-                            isVisualMatch = true
-                        }
-                    }
+					analyzer := mod.NewHexAnalyzer(hex1, targetHex2, "worker_check")
+					analysis := analyzer.Process()
 
-                    // Gabungkan semua kondisi
-                    if isSimilarityMatch && isEntropyMatch && isXorSumMatch && isVisualMatch {
-                        resultChan <- Result{
-                            PrivKey:  fullHex,
-                            Hash160:  hash160,
-                            Count:    currentCount,
-                            Analysis: analysis,
-                        }
-                    }
+					isSimilarityMatch := analysis.BitSimilarity >= 0.47 && analysis.BitSimilarity <= 0.499
 
-                    if workerID == 0 && currentCount%100000 == 0 {
-                        percentage := (float64(currentCount) / float64(totalRange)) * 100
-                        fmt.Printf("\rSearched %d keys (%.4f%% of range)...", currentCount, percentage)
-                    }
-                }
-            }
-        }(i)
-    }
+					isEntropyMatch := analysis.XorEntropy == 3.1699
+					isXorSumMatch := analysis.XorSum >= 1000 && analysis.XorSum <= 1100
 
-    <-sigChan
-    fmt.Println("\n\nStopping search...")
-    close(stopChan)
+					visual := analysis.VisualDiff
 
-    time.Sleep(500 * time.Millisecond)
+					isVisualMatch := false
+					if len(visual) == 9 && strings.HasSuffix(visual, "!") {
+						prefix := visual[:8]
+						if !strings.ContainsAny(prefix, "=") {
+							isVisualMatch = true
+						}
+					}
 
-    finalCount := atomic.LoadUint64(&totalCounter)
-    finalFound := atomic.LoadUint64(&foundCounter)
-    elapsed := time.Since(start)
+					// Gabungkan semua kondisi
+					if isSimilarityMatch && isEntropyMatch && isXorSumMatch && isVisualMatch {
+						resultChan <- Result{
+							PrivKey:  fullHex,
+							Hash160:  hash160,
+							Count:    currentCount,
+							Analysis: analysis,
+						}
+					}
 
-    fmt.Printf("Total keys scanned: %d\n", finalCount)
-    fmt.Printf("Total matches found: %d\n", finalFound)
-    fmt.Printf("Average speed: %.2f keys/sec\n", float64(finalCount)/elapsed.Seconds())
+					if workerID == 0 && currentCount%100000 == 0 {
+						percentage := (float64(currentCount) / float64(totalRange)) * 100
+						fmt.Printf("\rSearched %d keys (%.4f%% of range)...", currentCount, percentage)
+					}
+				}
+			}
+		}(i)
+	}
+
+	<-sigChan
+	fmt.Println("\n\nStopping search...")
+	close(stopChan)
+
+	time.Sleep(500 * time.Millisecond)
+
+	finalCount := atomic.LoadUint64(&totalCounter)
+	finalFound := atomic.LoadUint64(&foundCounter)
+	elapsed := time.Since(start)
+
+	fmt.Printf("Total keys scanned: %d\n", finalCount)
+	fmt.Printf("Total matches found: %d\n", finalFound)
+	fmt.Printf("Average speed: %.2f keys/sec\n", float64(finalCount)/elapsed.Seconds())
 }
